@@ -1,0 +1,19 @@
+[
+  { "shot": "start" },
+  { "click": { "x": 200, "y": 216 } },
+  { "type": "Hello from Slate" },
+  { "shot": "typed" },
+  { "click": { "x": 200, "y": 268, "count": 1 } },
+  { "click": { "x": 200, "y": 268 } },
+  { "shot": "clicked" },
+  { "click": { "x": 590, "y": 300 } },
+  { "key": "j j j" },
+  { "key": "k" },
+  { "shot": "list" },
+  { "key": "cmd-k" },
+  { "scroll": { "x": 590, "y": 300, "dy": 200 } },
+  { "shot": "palette-and-scroll" },
+  { "resize": "640x420" },
+  { "wait": 300 },
+  { "shot": "resized" }
+]
