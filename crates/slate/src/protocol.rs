@@ -18,6 +18,12 @@ pub const ENV_WAIT: &str = "SLATE_WAIT";
 /// `SLATE_DIR=<folder>`: where the app writes [`SHOT_FILE`] (and
 /// [`IMAGE_FILE`] when it can render the window itself). No folder, no shot.
 pub const ENV_DIR: &str = "SLATE_DIR";
+/// `SLATE_STEPS=<file.json>`: steps the app plays on its window, then quits.
+/// See [`crate::steps`].
+pub const ENV_STEPS: &str = "SLATE_STEPS";
+/// `SLATE_OUT=<folder>`: where a drive's shots and its
+/// [`DRIVE_FILE`](crate::steps::DRIVE_FILE) go. `SLATE_STEPS` needs it.
+pub const ENV_OUT: &str = "SLATE_OUT";
 
 /// The shot description the app writes into `SLATE_DIR` once the wait is up.
 pub const SHOT_FILE: &str = "shot.json";
@@ -29,7 +35,8 @@ pub const IMAGE_FILE: &str = "shot.png";
 pub const DEFAULT_WAIT: Duration = Duration::from_millis(1000);
 
 /// A window size in points, written `WIDTHxHEIGHT`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Size {
     pub width: f32,
     pub height: f32,
@@ -45,6 +52,20 @@ impl Size {
             if value.is_finite() && value > 0. { Ok(value) } else { Err(bad()) }
         };
         Ok(Self { width: side(width)?, height: side(height)? })
+    }
+}
+
+impl TryFrom<String> for Size {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        Self::parse(&text)
+    }
+}
+
+impl From<Size> for String {
+    fn from(size: Size) -> Self {
+        size.to_string()
     }
 }
 
@@ -65,6 +86,11 @@ pub struct Config {
     pub wait: Duration,
     /// Where the shot goes. None means the app runs hidden and takes no shot.
     pub dir: Option<PathBuf>,
+    /// The steps file to play on the window. While there is one, the app
+    /// plays it instead of taking the single shot `dir` asks for.
+    pub steps: Option<PathBuf>,
+    /// Where the drive's shots go.
+    pub out: Option<PathBuf>,
 }
 
 impl Config {
@@ -84,7 +110,7 @@ impl Config {
     pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> (Self, Vec<String>) {
         let mut problems = Vec::new();
         let enabled = var(ENV_ENABLED).is_some_and(|value| value.trim() == "1");
-        let mut config = Self { enabled, size: None, wait: DEFAULT_WAIT, dir: None };
+        let mut config = Self { enabled, size: None, wait: DEFAULT_WAIT, dir: None, steps: None, out: None };
         if !enabled {
             return (config, problems);
         }
@@ -100,7 +126,14 @@ impl Config {
                 Err(_) => problems.push(format!("{ENV_WAIT}: {text:?} should be milliseconds, like 1500")),
             }
         }
-        config.dir = var(ENV_DIR).filter(|text| !text.trim().is_empty()).map(PathBuf::from);
+        let path = |key| var(key).filter(|text| !text.trim().is_empty()).map(PathBuf::from);
+        config.dir = path(ENV_DIR);
+        config.steps = path(ENV_STEPS);
+        config.out = path(ENV_OUT);
+        if config.steps.is_some() && config.out.is_none() {
+            problems.push(format!("{ENV_STEPS} needs {ENV_OUT}, the folder for its shots; not playing the steps"));
+            config.steps = None;
+        }
         (config, problems)
     }
 }
@@ -199,6 +232,8 @@ mod tests {
                 size: Some(Size { width: 1440., height: 900. }),
                 wait: Duration::from_millis(2500),
                 dir: Some("/tmp/shot".into()),
+                steps: None,
+                out: None,
             }
         );
     }
@@ -207,7 +242,7 @@ mod tests {
     fn defaults_when_only_switched_on() {
         let (config, problems) = config(&[(ENV_ENABLED, "1")]);
         assert!(problems.is_empty());
-        assert_eq!(config, Config { enabled: true, size: None, wait: DEFAULT_WAIT, dir: None });
+        assert_eq!(config, Config { enabled: true, size: None, wait: DEFAULT_WAIT, dir: None, steps: None, out: None });
     }
 
     #[test]
@@ -218,6 +253,30 @@ mod tests {
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems[0].starts_with(ENV_SIZE));
         assert!(problems[1].starts_with(ENV_WAIT));
+    }
+
+    #[test]
+    fn reads_steps_and_their_out_folder() {
+        let (config, problems) = config(&[(ENV_ENABLED, "1"), (ENV_STEPS, "/tmp/steps.json"), (ENV_OUT, "/tmp/out")]);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(config.steps, Some("/tmp/steps.json".into()));
+        assert_eq!(config.out, Some("/tmp/out".into()));
+    }
+
+    #[test]
+    fn steps_without_an_out_folder_are_reported_and_dropped() {
+        let (config, problems) = config(&[(ENV_ENABLED, "1"), (ENV_STEPS, "/tmp/steps.json")]);
+        assert_eq!(config.steps, None);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains(ENV_OUT), "{problems:?}");
+    }
+
+    #[test]
+    fn size_reads_from_json_as_a_string() {
+        let size: Size = serde_json::from_str("\"390x844\"").unwrap();
+        assert_eq!(size, Size { width: 390., height: 844. });
+        assert_eq!(serde_json::to_string(&size).unwrap(), "\"390x844\"");
+        assert!(serde_json::from_str::<Size>("\"tall\"").is_err());
     }
 
     #[test]
