@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 use image::imageops::FilterType;
-use slate::Shot;
 use slate::protocol::{ENV_DIR, ENV_ENABLED, ENV_SIZE, ENV_WAIT};
+use slate::{Shot, Size};
 
 use crate::ShootArgs;
 
@@ -25,7 +25,7 @@ pub fn run(args: &ShootArgs) -> Result<(), String> {
         .prefix("slate-")
         .tempdir()
         .map_err(|error| format!("making a folder for the shot: {error}"))?;
-    let mut app = launch(args, dir.path())?;
+    let mut app = launch(&args.app, args.size, args.wait, &[(ENV_DIR, dir.path())])?;
     let shot = wait_for_shot(&mut app, dir.path(), Duration::from_millis(args.wait + args.timeout))?;
     let (image, source) = capture(&shot, dir.path())?;
     // The window is captured: the app can go before the image is written.
@@ -46,9 +46,9 @@ pub fn run(args: &ShootArgs) -> Result<(), String> {
 }
 
 /// The app, quit when this goes out of scope however `run` ends.
-struct App {
-    child: Child,
-    name: String,
+pub(crate) struct App {
+    pub(crate) child: Child,
+    pub(crate) name: String,
 }
 
 impl Drop for App {
@@ -57,11 +57,16 @@ impl Drop for App {
     }
 }
 
-fn launch(args: &ShootArgs, dir: &Path) -> Result<App, String> {
-    let (program, rest) = args.app.split_first().ok_or("no app to launch")?;
+/// Launches the app under Slate, with the window `size`, `wait` milliseconds
+/// to load and the rest of the handshake in `env`.
+pub(crate) fn launch(app: &[String], size: Option<Size>, wait: u64, env: &[(&str, &Path)]) -> Result<App, String> {
+    let (program, rest) = app.split_first().ok_or("no app to launch")?;
     let mut command = Command::new(program);
-    command.args(rest).env(ENV_ENABLED, "1").env(ENV_DIR, dir).env(ENV_WAIT, args.wait.to_string());
-    match args.size {
+    command.args(rest).env(ENV_ENABLED, "1").env(ENV_WAIT, wait.to_string());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    match size {
         Some(size) => command.env(ENV_SIZE, size.to_string()),
         None => command.env_remove(ENV_SIZE),
     };
@@ -121,7 +126,7 @@ fn screencapture_args(window_id: u32, path: &Path) -> Vec<String> {
 }
 
 /// Scales a device-pixel image back to the window's size in points.
-fn to_points(image: RgbaImage, (width, height): (u32, u32)) -> RgbaImage {
+pub(crate) fn to_points(image: RgbaImage, (width, height): (u32, u32)) -> RgbaImage {
     if image.dimensions() == (width, height) {
         return image;
     }
@@ -129,7 +134,7 @@ fn to_points(image: RgbaImage, (width, height): (u32, u32)) -> RgbaImage {
 }
 
 /// SIGTERM, then a kill if the app is still there after two seconds.
-fn quit(child: &mut Child) {
+pub(crate) fn quit(child: &mut Child) {
     if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }
