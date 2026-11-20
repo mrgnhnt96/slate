@@ -1,0 +1,33 @@
+[package]
+name = "slate"
+description = "Run a GPUI app hidden below the desktop, without focus, and capture its window"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+default = ["gpui"]
+# The part an app calls: hide the window and take the shot. Without it the
+# crate is only the protocol the `slate` command shares with the app.
+gpui = ["dep:gpui-kit", "dep:image"]
+# Capture inside the app with GPUI's Window::render_to_image (Metal, no Screen
+# Recording permission). It needs GPUI's test-support feature; without it the
+# `slate` command falls back to `screencapture -l`.
+render = ["gpui", "gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+raw-window-handle = "0.6"
+
+[[example]]
+name = "hello"
+required-features = ["gpui"]
+
+[lints]
+workspace = true
