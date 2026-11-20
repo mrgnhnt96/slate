@@ -1,0 +1,19 @@
+[package]
+name = "slate-cli"
+description = "The slate command: launch a GPUI app hidden and screenshot it"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "slate"
+path = "src/main.rs"
+
+[dependencies]
+slate.workspace = true
+clap = { version = "4.6", features = ["derive"] }
+image.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true
