@@ -9,7 +9,9 @@
 //!
 //! What it draws changes after the window opens (a "loaded" card appears and
 //! a counter ticks five times), so a shot that shows them proves the hidden window kept
-//! drawing. The bottom half is there to be driven: a text field, a button
+//! drawing. A fourth card is a view built during the first render after the
+//! card loads, which loads 60 ms later itself, so it only shows loaded if
+//! frames kept coming during the wait. The bottom half is there to be driven: a text field, a button
 //! with a hover colour, and a list that takes focus and moves its selection
 //! with `j` and `k`, bound only in the list's key context. `cmd-k` opens a
 //! palette from anywhere. The status line says whether GPUI sees the window
@@ -35,6 +37,9 @@ struct Hello {
     list_focus: FocusHandle,
     list_focus_events: u32,
     input: Entity<InputState>,
+    /// Built on the first render after loading, like a screen that makes its
+    /// view lazily.
+    lazy: Option<Entity<Lazy>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -76,6 +81,7 @@ impl Hello {
             list_focus,
             list_focus_events: 0,
             input,
+            lazy: None,
             _subscriptions: vec![heard],
         }
     }
@@ -125,8 +131,46 @@ fn card(color: u32, label: impl Into<SharedString>) -> Div {
         .child(label.into())
 }
 
+/// A view built during `Hello::render` once the app has loaded, which then
+/// loads 60 ms later, the way a screen builds its view lazily and then fetches
+/// its data. It's built on the first frame drawn after 300 ms and only loads
+/// if the hidden window keeps drawing frames after that one.
+struct Lazy {
+    loaded: bool,
+}
+
+impl Lazy {
+    fn new(cx: &mut Context<Self>) -> Self {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(60)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.loaded = true;
+                cx.notify();
+            });
+        })
+        .detach();
+        Self { loaded: false }
+    }
+}
+
+/// The lazy card's colour once it has loaded, which the tests look for.
+const LAZY_LOADED: u32 = 0x00838f;
+
+impl Render for Lazy {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if self.loaded { card(LAZY_LOADED, "Built in render") } else { card(0x9e9e9e, "Building…") }
+    }
+}
+
 impl Render for Hello {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Built on the first render after loading, as a screen the app opens
+        // later builds its view lazily.
+        let lazy = if self.loaded {
+            self.lazy.get_or_insert_with(|| cx.new(Lazy::new)).clone().into_any_element()
+        } else {
+            card(0x9e9e9e, "Not built yet").into_any_element()
+        };
         let status = if self.loaded { card(0x2e7d32, "Loaded after open") } else { card(0x9e9e9e, "Loading…") };
         let active = if window.is_window_active() { "yes" } else { "no" };
         let title = if self.palette { "Palette open (cmd-k)" } else { "Slate hello" };
@@ -149,7 +193,15 @@ impl Render for Hello {
                 "Ticks while hidden: {} · Window active: {active} · List focus events: {}",
                 self.ticks, self.list_focus_events
             )))
-            .child(div().flex().gap(px(12.)).child(card(0x1565c0, "Blue")).child(card(0xc62828, "Red")).child(status))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .child(card(0x1565c0, "Blue"))
+                    .child(card(0xc62828, "Red"))
+                    .child(status)
+                    .child(lazy),
+            )
             .child(
                 div()
                     .flex_1()
