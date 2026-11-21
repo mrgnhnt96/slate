@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use gpui_kit::{
     ActivationPolicy, AnyWindowHandle, App, AppContext as _, Application, AsyncApp, Bounds, Window, WindowBounds,
@@ -83,8 +84,8 @@ pub fn attach(window: &mut Window, cx: &mut App) {
     };
     let wait = config.wait;
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(wait).await;
-        // A fresh frame first, presented so `screencapture -l` sees it too.
+        draw_for(handle, wait, cx).await;
+        // A fresh frame last, presented so `screencapture -l` sees it too.
         // No await between here and the shot, so the window can't close.
         present(handle, cx);
         let shot = cx.update_window(handle, |_, window, _| shoot(window, &dir));
@@ -103,6 +104,26 @@ pub fn activate(cx: &mut App) {
     if !enabled() {
         cx.activate(true);
     }
+}
+
+/// Waits `wait`, drawing and presenting a frame now and every
+/// [`SETTLE`](crate::steps::SETTLE) until it's up. A hidden window gets no
+/// frames otherwise, so a view the app builds while rendering, and whatever
+/// it loads after that, would never show.
+pub(crate) async fn draw_for(handle: AnyWindowHandle, wait: Duration, cx: &mut AsyncApp) {
+    let start = Instant::now();
+    present(handle, cx);
+    while let Some(pause) = next_pause(wait, start.elapsed()) {
+        cx.background_executor().timer(pause).await;
+        present(handle, cx);
+    }
+}
+
+/// How long to wait before the next frame, `elapsed` into a wait of `wait`,
+/// or `None` once it's up.
+fn next_pause(wait: Duration, elapsed: Duration) -> Option<Duration> {
+    let left = wait.saturating_sub(elapsed);
+    (!left.is_zero()).then(|| left.min(crate::steps::SETTLE))
 }
 
 /// Has GPUI draw the window and present the frame now. GPUI stops drawing a
@@ -168,4 +189,25 @@ fn render(window: &mut Window, path: &Path) -> Result<(), String> {
 #[cfg(not(feature = "render"))]
 fn render(_: &mut Window, _: &Path) -> Result<(), String> {
     Err("the app was built without slate's `render` feature".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SETTLE: Duration = crate::steps::SETTLE;
+
+    #[test]
+    fn frames_come_every_settle_until_the_wait_is_up() {
+        let wait = Duration::from_millis(120);
+        assert_eq!(next_pause(wait, Duration::ZERO), Some(SETTLE));
+        assert_eq!(next_pause(wait, Duration::from_millis(100)), Some(Duration::from_millis(20)));
+        assert_eq!(next_pause(wait, wait), None);
+        assert_eq!(next_pause(wait, Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn no_wait_means_no_pause() {
+        assert_eq!(next_pause(Duration::ZERO, Duration::ZERO), None);
+    }
 }
