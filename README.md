@@ -77,7 +77,7 @@ Under Slate:
 - The app starts as an accessory app: no Dock icon, no menu bar, never the frontmost app. `slate::hidden(app)` does the same for an `Application` built some other way.
 - The main window opens without focus, at `SLATE_SIZE` when the command passes `--size`.
 - The window sits one level below the desktop picture (`kCGDesktopWindowLevel - 1`, -2147483624), lets clicks pass through, is on every Space, and stays out of window cycling and the Window menu. Moving it off screen isn't enough: macOS clamps a titled window back until a strip of it shows.
-- `SLATE_WAIT` after the window opens, Slate has GPUI draw and present a fresh frame (GPUI stops drawing an occluded window on its own), then takes the shot, or plays the steps and quits the app.
+- GPUI stops drawing an occluded window on its own, so Slate has it draw and present a frame as soon as the window opens and every 50 ms after that until `SLATE_WAIT` is up. A view the app builds while rendering, and whatever it loads after that, shows in the shot. Then Slate presents one more fresh frame and takes the shot from it, or plays the steps and quits the app.
 
 ## Two ways to capture
 
@@ -108,6 +108,7 @@ Under Slate:
 ```sh
 cargo test --workspace
 scripts/prove.sh            # writes target/slate-proof/{render,screencapture}.png and drive*/
+cargo test -p slate-cli --test shoot -- --ignored   # opens a hidden window
 ```
 
-`scripts/prove.sh` shoots the example app in `crates/slate/examples/hello.rs` both ways, then drives it both ways with `crates/slate/examples/hello.steps.json`: it types into a text field, clicks a button twice, focuses a list and moves its selection with `j` and `k` (bound only in the list's key context), opens a palette with `cmd-k`, scrolls and resizes. While each run goes it asks System Events for the frontmost app every 100 ms, and fails if the example ever becomes frontmost or its window isn't below the desktop. It also fails if a shot in the drive looks just like the one before it. The example changes what it draws after it opens (a counter and a "Loaded" card), so the PNGs show the hidden window kept drawing, and its status line shows whether GPUI sees the window as active and how many focus events the list heard.
+`scripts/prove.sh` shoots the example app in `crates/slate/examples/hello.rs` both ways, then drives it both ways with `crates/slate/examples/hello.steps.json`: it types into a text field, clicks a button twice, focuses a list and moves its selection with `j` and `k` (bound only in the list's key context), opens a palette with `cmd-k`, scrolls and resizes. While each run goes it asks System Events for the frontmost app every 100 ms, and fails if the example ever becomes frontmost or its window isn't below the desktop. It also fails if a shot in the drive looks just like the one before it, and runs the ignored `shoot` test on the rendering build, which fails unless the card built during render shows loaded. The example changes what it draws after it opens (a counter, a "Loaded" card, and a card whose view it builds while rendering once that card has loaded, which then loads 60 ms later), so the PNGs show the hidden window kept drawing, and its status line shows whether GPUI sees the window as active and how many focus events the list heard.

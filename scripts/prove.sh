@@ -113,6 +113,9 @@ drive() {
   done
 }
 
+echo "a view built during render loads before the shot:"
+SLATE_HELLO="$out/render/hello" cargo test --quiet -p slate-cli --test shoot -- --ignored
+
 echo "drive, rendered by the app (typing, clicks, keys and focus in the hidden window):"
 drive drive "$out/render/hello"
 echo "drive, with screencapture:"

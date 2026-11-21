@@ -19,7 +19,9 @@ use crate::steps::{self, Button, Drive, DriveShot, SETTLE, Step};
 pub(crate) fn start(handle: AnyWindowHandle, steps_file: PathBuf, out: PathBuf, cx: &mut App) {
     let wait = crate::config().wait;
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(wait).await;
+        // Frames while the app loads, so a view it builds while rendering
+        // gets to load before the first step.
+        crate::app::draw_for(handle, wait, cx).await;
         let drive = play(handle, &steps_file, &out, cx).await;
         if let Some(problem) = &drive.error {
             eprintln!("slate: {problem}");
