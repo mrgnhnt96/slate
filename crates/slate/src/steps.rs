@@ -15,10 +15,17 @@
 //!   { "key": "down down enter" },
 //!   { "move": { "x": 400, "y": 200 } },
 //!   { "scroll": { "x": 400, "y": 300, "dy": 240 } },
+//!   { "drag": { "from": { "x": 320, "y": 400 }, "to": { "x": 480, "y": 400 } } },
+//!   { "menu": "View > Hide Sidebar" },
+//!   { "menus": "menu-bar" },
 //!   { "resize": "1280x820" },
 //!   { "shot": "after-search" }
 //! ]
 //! ```
+//!
+//! Clicks, drags and scrolls over a native view the app laid over its GPUI
+//! view (a `wry` WKWebView) go to that view as AppKit events, and keys and
+//! typing go to it while it has the keyboard, the way they would for a person.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -53,6 +60,15 @@ pub enum Step {
     Move(Point),
     /// A scroll wheel turn over a point in the window.
     Scroll(Scroll),
+    /// The left button pressed at one point, the pointer moved to another
+    /// with it held, then released there.
+    Drag(Drag),
+    /// Chooses an item in the app's menu bar, by its menus' titles and its
+    /// own: `"View > Hide Sidebar"`. Fails when it's disabled.
+    Menu(String),
+    /// Saves the app's menu bar as it would show now (titles, shortcuts,
+    /// checkmarks, disabled items) as `<name>.json`.
+    Menus(String),
     /// A pause in milliseconds, for the app to load or animate.
     Wait(u64),
     /// The window's new content size in points, `"WIDTHxHEIGHT"`.
@@ -112,6 +128,48 @@ pub struct Scroll {
     pub dy: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Drag {
+    pub from: Point,
+    pub to: Point,
+    /// How many pointer moves it takes from `from` to `to`, each drawn
+    /// before the next, so drag handlers see it go.
+    #[serde(default = "default_moves")]
+    pub moves: u32,
+    /// Modifier keys held through the drag, like `"alt"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modifiers: Option<String>,
+}
+
+/// The pointer moves in a drag unless the step says how many.
+pub const DRAG_MOVES: u32 = 10;
+
+/// The pause between a drag's moves, for the app to draw each one.
+pub const DRAG_FRAME: Duration = Duration::from_millis(16);
+
+fn default_moves() -> u32 {
+    DRAG_MOVES
+}
+
+impl Drag {
+    /// Where the pointer is after move `index` of `moves` (1 to `moves`).
+    pub fn at(&self, index: u32) -> Point {
+        let t = index as f32 / self.moves as f32;
+        Point { x: self.from.x + (self.to.x - self.from.x) * t, y: self.from.y + (self.to.y - self.from.y) * t }
+    }
+}
+
+/// A menu step's path: `"View > Hide Sidebar"` is `["View", "Hide Sidebar"]`.
+/// A menu and at least one item in it.
+pub fn menu_path(text: &str) -> Result<Vec<&str>, String> {
+    let path: Vec<&str> = text.split('>').map(str::trim).collect();
+    if path.len() < 2 || path.iter().any(|title| title.is_empty()) {
+        return Err(format!("{text:?} should name a menu and an item in it, like \"View > Hide Sidebar\""));
+    }
+    Ok(path)
+}
+
 /// Modifier keys, read from `"cmd-shift"`. `cmd` is also `platform` or
 /// `super`, `alt` is also `option`, and `ctrl` is also `control`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -150,6 +208,9 @@ impl Step {
             Step::Click(click) => format!("click at {},{}", click.x, click.y),
             Step::Move(point) => format!("move to {},{}", point.x, point.y),
             Step::Scroll(scroll) => format!("scroll {},{} at {},{}", scroll.dx, scroll.dy, scroll.x, scroll.y),
+            Step::Drag(drag) => format!("drag {},{} to {},{}", drag.from.x, drag.from.y, drag.to.x, drag.to.y),
+            Step::Menu(path) => format!("menu {path:?}"),
+            Step::Menus(name) => format!("menus {name:?}"),
             Step::Wait(ms) => format!("wait {ms}ms"),
             Step::Resize(size) => format!("resize to {size}"),
             Step::Shot(name) => format!("shot {name:?}"),
@@ -160,6 +221,7 @@ impl Step {
     pub fn duration(&self) -> Duration {
         match self {
             Step::Wait(ms) => Duration::from_millis(*ms),
+            Step::Drag(drag) => DRAG_FRAME * (drag.moves + 1),
             _ => Duration::ZERO,
         }
     }
@@ -182,7 +244,14 @@ impl Step {
             Step::Scroll(scroll) if !finite(&[scroll.x, scroll.y, scroll.dx, scroll.dy]) => {
                 Err("the point or distance isn't a number".into())
             }
-            Step::Shot(name) => check_shot_name(name),
+            Step::Drag(drag) => {
+                if !(1..=100).contains(&drag.moves) {
+                    return Err(format!("moves {} should be 1 to 100", drag.moves));
+                }
+                drag.modifiers.as_deref().map(Modifiers::parse).transpose().map(drop)
+            }
+            Step::Menu(path) => menu_path(path).map(drop),
+            Step::Shot(name) | Step::Menus(name) => check_shot_name(name),
             _ => Ok(()),
         }
     }
@@ -199,16 +268,17 @@ fn check_shot_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The steps from a steps file, checked: every shot has a name of its own.
+/// The steps from a steps file, checked: every shot and menu bar record has
+/// a name of its own.
 pub fn parse(text: &str) -> Result<Vec<Step>, String> {
     let steps: Vec<Step> = serde_json::from_str(text).map_err(|error| format!("not a list of steps: {error}"))?;
     let mut names = HashSet::new();
     for (index, step) in steps.iter().enumerate() {
         step.check().map_err(|problem| format!("step {} ({}): {problem}", index + 1, step.describe()))?;
-        if let Step::Shot(name) = step
+        if let Step::Shot(name) | Step::Menus(name) = step
             && !names.insert(name.as_str())
         {
-            return Err(format!("step {}: there's already a shot called {name:?}", index + 1));
+            return Err(format!("step {}: there's already a shot or menus called {name:?}", index + 1));
         }
     }
     Ok(steps)
@@ -241,6 +311,9 @@ pub struct Drive {
     pub played: usize,
     /// The shots taken, in order.
     pub shots: Vec<DriveShot>,
+    /// The names of the menu bar records saved (`<name>.json`), in order.
+    #[serde(default)]
+    pub menus: Vec<String>,
     /// Why the drive stopped early, if it did.
     pub error: Option<String>,
 }
@@ -280,7 +353,11 @@ mod tests {
                 {"scroll": {"x": 5, "y": 6, "dy": 120}},
                 {"wait": 250},
                 {"resize": "1280x820"},
-                {"shot": "after typing"}
+                {"shot": "after typing"},
+                {"drag": {"from": {"x": 300, "y": 400}, "to": {"x": 420, "y": 400}}},
+                {"drag": {"from": {"x": 1, "y": 2}, "to": {"x": 3, "y": 4}, "moves": 4, "modifiers": "alt"}},
+                {"menu": "View > Hide Sidebar"},
+                {"menus": "menu bar"}
             ]"#,
         )
         .unwrap();
@@ -302,8 +379,38 @@ mod tests {
                 Step::Wait(250),
                 Step::Resize(Size { width: 1280., height: 820. }),
                 Step::Shot("after typing".into()),
+                Step::Drag(Drag {
+                    from: Point { x: 300., y: 400. },
+                    to: Point { x: 420., y: 400. },
+                    moves: DRAG_MOVES,
+                    modifiers: None
+                }),
+                Step::Drag(Drag {
+                    from: Point { x: 1., y: 2. },
+                    to: Point { x: 3., y: 4. },
+                    moves: 4,
+                    modifiers: Some("alt".into())
+                }),
+                Step::Menu("View > Hide Sidebar".into()),
+                Step::Menus("menu bar".into()),
             ]
         );
+    }
+
+    #[test]
+    fn a_drag_moves_evenly_and_ends_where_it_says() {
+        let drag = Drag { from: Point { x: 100., y: 50. }, to: Point { x: 200., y: 30. }, moves: 4, modifiers: None };
+        assert_eq!(drag.at(1), Point { x: 125., y: 45. });
+        assert_eq!(drag.at(4), drag.to);
+        assert_eq!(Step::Drag(drag).duration(), DRAG_FRAME * 5);
+    }
+
+    #[test]
+    fn a_menu_path_names_a_menu_and_an_item() {
+        assert_eq!(menu_path("View > Hide Sidebar").unwrap(), ["View", "Hide Sidebar"]);
+        assert_eq!(menu_path("File>Open Recent > notes.md").unwrap(), ["File", "Open Recent", "notes.md"]);
+        assert!(menu_path("View").is_err());
+        assert!(menu_path("View > ").is_err());
     }
 
     #[test]
@@ -321,6 +428,12 @@ mod tests {
             (r#"[{"shot": "../escape"}]"#, "shot name"),
             (r#"[{"shot": ""}]"#, "shot name"),
             (r#"[{"shot": "a"}, {"wait": 1}, {"shot": "a"}]"#, "step 3: there's already"),
+            (r#"[{"shot": "a"}, {"menus": "a"}]"#, "step 2: there's already"),
+            (r#"[{"menus": "../bar"}]"#, "shot name"),
+            (r#"[{"menu": "Quit"}]"#, "should name a menu and an item"),
+            (r#"[{"drag": {"from": {"x": 1, "y": 2}}}]"#, "missing field"),
+            (r#"[{"drag": {"from": {"x": 1, "y": 2}, "to": {"x": 3, "y": 4}, "moves": 0}}]"#, "moves 0"),
+            (r#"[{"drag": {"from": {"x": 1, "y": 2}, "to": {"x": 3, "y": 4}, "modifiers": "meta"}}]"#, "isn't a modifier"),
         ] {
             let problem = parse(text).unwrap_err();
             assert!(problem.contains(wanted), "{text}: {problem}");
@@ -364,6 +477,7 @@ mod tests {
                     render_error: None,
                 },
             }],
+            menus: vec!["menu-bar".into()],
             error: Some("step 4 (key \"cmd-?\"): bad".into()),
         };
         drive.write(&dir).unwrap();
