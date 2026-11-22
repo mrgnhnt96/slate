@@ -53,6 +53,11 @@ impl Size {
         };
         Ok(Self { width: side(width)?, height: side(height)? })
     }
+
+    /// This size, made no smaller than `min` on either side.
+    pub fn at_least(self, min: Size) -> Self {
+        Self { width: self.width.max(min.width), height: self.height.max(min.height) }
+    }
 }
 
 impl TryFrom<String> for Size {
@@ -201,6 +206,14 @@ mod tests {
         for text in ["", "1280", "1280x", "x820", "0x820", "1280x-1", "wide x tall", "NaNx3", "infx3"] {
             assert!(Size::parse(text).is_err(), "{text:?} should not parse");
         }
+    }
+
+    #[test]
+    fn a_resize_stops_at_the_minimum_on_each_side() {
+        let min = Size { width: 640., height: 480. };
+        let wide = Size { width: 800., height: 400. };
+        assert_eq!(wide.at_least(min), Size { width: 800., height: 480. });
+        assert_eq!(Size { width: 500., height: 400. }.at_least(min), min);
     }
 
     #[test]

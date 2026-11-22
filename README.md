@@ -44,13 +44,26 @@ A hidden window gets no key presses or clicks from macOS, so the app plays them 
 | `{"click": {"x": 10, "y": 20}}` | Clicks at a point in the window, in points from its top left. Optional: `"button"` (`left`, `right`, `middle`), `"count"` (1 to 3, for double and triple clicks), `"modifiers"` (`"cmd-shift"`). The pointer stays there, so whatever is under it shows its hover. |
 | `{"move": {"x": 10, "y": 20}}` | Moves the pointer, for hover. |
 | `{"scroll": {"x": 10, "y": 20, "dy": 200}}` | Scrolls whatever is under the point. Positive `dy` scrolls down the page, positive `dx` right. |
+| `{"drag": {"from": {"x": 10, "y": 20}, "to": {"x": 200, "y": 20}}}` | Presses the left button at `from`, moves the pointer to `to` with it held and releases it there. Optional: `"moves"` (1 to 100, default 10), how many pointer moves it takes, each drawn before the next so drag handlers follow it; `"modifiers"` held throughout. |
+| `{"menu": "View > Hide Sidebar"}` | Chooses an item in the app's menu bar by the menu titles and its own, `>` between them (`"File > Open Recent > notes.md"`). Fails when the item is disabled, isn't there (the message lists what is) or is one of macOS's own items. |
+| `{"menus": "name"}` | Saves the menu bar as it would show now as `<out>/<name>.json`: each menu's items with their titles, shortcuts as macOS writes them (`⇧⌘A`), `enabled`, `checked`, separators and submenus. |
 | `{"wait": 500}` | Waits, in milliseconds, for animations or loading. |
-| `{"resize": "1024x700"}` | Resizes the window, in points. |
+| `{"resize": "1024x700"}` | Resizes the window, in points. It stops at the app's own minimum size, as a person dragging its corner would. |
 | `{"shot": "name"}` | Saves the window as `<out>/<name>.png`. Names are unique, with letters, digits, `-`, `_`, `.` and spaces. |
 
 After each step Slate waits 50 ms and draws a frame, so the next click lands on what the window shows now.
 
+### Menus
+
+An app under Slate never gets the menu bar on screen, since macOS gives it only to the app in front. Its menus are still built, though. Slate makes the hidden window the app's main window, which needs no activation, so GPUI sends menu choices to it and checks which items are enabled against it. A `menus` step updates each menu the way opening it does and reads the result. A `menu` step chooses an item the way a click in the menu bar does. Neither one ever opens a menu on screen.
+
+### Web views
+
+When an app lays a native view over its GPUI view, such as a `wry` WKWebView for HTML mail, GPUI never sees the clicks and keys that land on it. Slate looks up which view is under the point, as the window does. When that's the app's own native view, a `click`, `move` or `drag` goes to it as AppKit mouse events, and a click gives it the keyboard. While a native view has the keyboard, `key` and `type` go to it as AppKit key events for a US keyboard. A key with `cmd` or `ctrl` is tried as a key equivalent first, on the window's views and then on the menu bar. A click back on GPUI's view gives the keyboard back to GPUI. Only the left button clicks in a web view, since its context menu would stay open. `scroll` always goes to GPUI.
+
 For the steps to behave as they would for a person, GPUI has to treat the hidden window as the key window: focus listeners, text cursors and hover all wait for it. Slate gives that one window a subclass whose `isKeyWindow` answers yes and tells GPUI it became key. macOS itself never makes it key and never activates the app, so the app you're using keeps focus and your own keys never reach the hidden one.
+
+The same subclass says the window can be seen: its `occlusionState` answers visible. A web view stops drawing in a window macOS reports as covered, as one below the desktop is, so without this every shot after the first shows the web view blank.
 
 ## Add Slate to an app
 
@@ -99,9 +112,9 @@ Under Slate:
 | `SLATE_WAIT=<ms>` | command | Time from opening the window to the shot. |
 | `SLATE_DIR=<folder>` | command | Where the app writes `shot.json` (and `shot.png` when it renders). Without it the app runs hidden and takes no shot. |
 | `SLATE_STEPS=<file>` | command | The steps file to play. Needs `SLATE_OUT`; takes the place of `SLATE_DIR`. |
-| `SLATE_OUT=<folder>` | command | Where the app writes `<name>.png` for each shot step (in device pixels) and `drive.json`. |
+| `SLATE_OUT=<folder>` | command | Where the app writes `<name>.png` for each shot step (in device pixels), `<name>.json` for each menus step and `drive.json`. |
 
-`shot.json` holds the window number (the CGWindowID), the scale factor, the size in points, and the rendered image's path or why there isn't one. `drive.json` holds how many steps played, each shot (the same fields plus its name) and the error that stopped the steps, if any. The types are in `slate::protocol` and `slate::steps`.
+`shot.json` holds the window number (the CGWindowID), the scale factor, the size in points, and the rendered image's path or why there isn't one. `drive.json` holds how many steps played, each shot (the same fields plus its name), the names of the menu bar records saved and the error that stopped the steps, if any. The types are in `slate::protocol` and `slate::steps`.
 
 ## Prove it
 

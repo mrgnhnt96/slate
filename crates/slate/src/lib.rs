@@ -36,6 +36,8 @@
 //! All the unsafe code (the AppKit calls) lives in this crate, so apps can
 //! keep `unsafe_code = "forbid"`.
 
+pub mod keys;
+pub mod menus;
 pub mod protocol;
 pub mod steps;
 
@@ -49,6 +51,9 @@ mod app;
 
 #[cfg(feature = "gpui")]
 mod drive;
+
+#[cfg(all(feature = "gpui", target_os = "macos"))]
+mod native;
 
 #[cfg(feature = "gpui")]
 pub use app::{activate, application, attach, config, enabled, hidden, window_options};
