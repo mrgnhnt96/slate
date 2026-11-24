@@ -24,7 +24,11 @@
 //!
 //! The capture: with the `render` feature the app renders its own window
 //! with Metal (`Window::render_to_image`), which needs no Screen Recording
-//! permission. Without it, the `slate` command captures the window with
+//! permission. That draws only GPUI's scene, so Slate asks WebKit for a
+//! picture of each web view the app lays over it (a `wry` WKWebView, with
+//! `takeSnapshotWithConfiguration:`, also in the app's own process) and lays
+//! it over the frame where the view shows, transparent parts and all. Without
+//! the feature, the `slate` command captures the window with
 //! `screencapture -l`.
 //!
 //! Driving: with `SLATE_STEPS` the app plays a steps file ([`steps`]) on the
@@ -54,6 +58,12 @@ mod drive;
 
 #[cfg(all(feature = "gpui", target_os = "macos"))]
 mod native;
+
+#[cfg(feature = "gpui")]
+mod render;
+
+#[cfg(all(feature = "render", target_os = "macos"))]
+mod snapshot;
 
 #[cfg(feature = "gpui")]
 pub use app::{activate, application, attach, config, enabled, hidden, window_options};

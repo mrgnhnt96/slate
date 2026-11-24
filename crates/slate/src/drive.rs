@@ -178,9 +178,7 @@ const COMPOSITE: std::time::Duration = std::time::Duration::from_millis(150);
 /// with `screencapture -l` (which needs Screen Recording permission).
 async fn shoot(handle: AnyWindowHandle, out: &Path, name: &str, cx: &mut AsyncApp) -> Result<DriveShot, String> {
     let path = out.join(format!("{name}.png"));
-    let mut shot = cx
-        .update_window(handle, |_, window, _| crate::app::shot(window, &path))
-        .map_err(|error| format!("the window is gone: {error}"))??;
+    let mut shot = crate::app::shot(handle, &path, cx).await?;
     if shot.image.is_none() {
         cx.background_executor().timer(COMPOSITE).await;
         screencapture(shot.window_id, &path)?;

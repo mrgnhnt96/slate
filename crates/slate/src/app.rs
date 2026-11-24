@@ -86,13 +86,12 @@ pub fn attach(window: &mut Window, cx: &mut App) {
     cx.spawn(async move |cx| {
         draw_for(handle, wait, cx).await;
         // A fresh frame last, presented so `screencapture -l` sees it too.
-        // No await between here and the shot, so the window can't close.
         present(handle, cx);
-        let shot = cx.update_window(handle, |_, window, _| shoot(window, &dir));
-        match shot {
-            Ok(Ok(())) => {}
-            Ok(Err(problem)) => eprintln!("slate: no shot: {problem}"),
-            Err(problem) => eprintln!("slate: no shot, the window is gone: {problem}"),
+        let written = shot(handle, &dir.join(IMAGE_FILE), cx)
+            .await
+            .and_then(|shot| shot.write(&dir).map_err(|error| format!("writing {}: {error}", dir.display())));
+        if let Err(problem) = written {
+            eprintln!("slate: no shot: {problem}");
         }
     })
     .detach();
@@ -142,28 +141,36 @@ pub(crate) fn present(handle: AnyWindowHandle, cx: &mut AsyncApp) {
     let _ = cx.update_window(handle, |_, window, _| window.refresh());
 }
 
-/// Writes the shot file, with the window rendered by the app when it can.
-fn shoot(window: &mut Window, dir: &Path) -> Result<(), String> {
-    shot(window, &dir.join(IMAGE_FILE))?.write(dir).map_err(|error| format!("writing {}: {error}", dir.display()))
+/// Describes the window and renders it to `path` when the app can, with the
+/// web views it hosts drawn in. When it can't, the shot says why and has no
+/// image.
+pub(crate) async fn shot(handle: AnyWindowHandle, path: &Path, cx: &mut AsyncApp) -> Result<Shot, String> {
+    // The frame and the web views' pictures are taken in one go, then the
+    // pictures come in while the app runs on.
+    let (mut shot, frame) = cx
+        .update_window(handle, |_, window, _| describe(window).map(|shot| (shot, crate::render::start(window))))
+        .map_err(|error| format!("the window is gone: {error}"))??;
+    let rendered = match frame {
+        Ok(frame) => crate::render::finish(frame, path, cx).await,
+        Err(problem) => Err(problem),
+    };
+    match rendered {
+        Ok(()) => shot.image = Some(path.to_path_buf()),
+        Err(problem) => shot.render_error = Some(problem),
+    }
+    Ok(shot)
 }
 
-/// Describes the window and renders it to `path` when the app can. When it
-/// can't, the shot says why and has no image.
-pub(crate) fn shot(window: &mut Window, path: &Path) -> Result<Shot, String> {
+fn describe(window: &Window) -> Result<Shot, String> {
     let viewport = window.viewport_size();
-    let mut shot = Shot {
+    Ok(Shot {
         window_id: window_id(window)?,
         scale: window.scale_factor(),
         width: f32::from(viewport.width),
         height: f32::from(viewport.height),
         image: None,
         render_error: None,
-    };
-    match render(window, path) {
-        Ok(()) => shot.image = Some(path.to_path_buf()),
-        Err(problem) => shot.render_error = Some(problem),
-    }
-    Ok(shot)
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -174,21 +181,6 @@ fn window_id(window: &Window) -> Result<u32, String> {
 #[cfg(not(target_os = "macos"))]
 fn window_id(_: &Window) -> Result<u32, String> {
     Err("Slate captures windows on macOS only".into())
-}
-
-/// Renders the last frame to a PNG with Metal, which needs no Screen
-/// Recording permission and doesn't care whether the window can be seen.
-#[cfg(feature = "render")]
-fn render(window: &mut Window, path: &Path) -> Result<(), String> {
-    let image = window.render_to_image().map_err(|error| format!("render_to_image: {error:#}"))?;
-    image
-        .save_with_format(path, image::ImageFormat::Png)
-        .map_err(|error| format!("writing {}: {error}", path.display()))
-}
-
-#[cfg(not(feature = "render"))]
-fn render(_: &mut Window, _: &Path) -> Result<(), String> {
-    Err("the app was built without slate's `render` feature".into())
 }
 
 #[cfg(test)]

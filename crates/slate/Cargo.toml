@@ -11,7 +11,7 @@ default = ["gpui"]
 # crate is only the protocol the `slate` command shares with the app.
 gpui = ["dep:gpui-kit", "dep:image"]
 # Capture inside the app with GPUI's Window::render_to_image (Metal, no Screen
-# Recording permission). It needs GPUI's test-support feature; without it the
+# Recording permission), with the web views the app hosts drawn in by WebKit. It needs GPUI's test-support feature; without it the
 # `slate` command falls back to `screencapture -l`.
 render = ["gpui", "gpui-kit/test-support"]
 
@@ -22,11 +22,23 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The handler block WebKit calls with a web view's picture. Already in the
+# apps' lock files (the objc2 0.6 family's), so adding it moves nothing.
+block2 = "0.6.2"
 objc = "0.2.7"
 raw-window-handle = "0.6"
 
+# The `web` example's web view, at the version kaepora-mac uses. A dev
+# dependency, so it never reaches an app's lock file.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+wry = { version = "0.53", default-features = false, features = ["transparent"] }
+
 [[example]]
 name = "hello"
+required-features = ["gpui"]
+
+[[example]]
+name = "web"
 required-features = ["gpui"]
 
 [lints]

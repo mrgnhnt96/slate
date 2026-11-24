@@ -116,6 +116,11 @@ drive() {
 echo "a view built during render loads before the shot:"
 SLATE_HELLO="$out/render/hello" cargo test --quiet -p slate-cli --test shoot -- --ignored
 
+echo "a web view the app hosts is in the rendered shots, and matches screencapture:"
+cargo build --quiet -p slate --example web --features render
+cp target/debug/examples/web "$out/render/web"
+SLATE_WEB="$out/render/web" cargo test --quiet -p slate-cli --test web -- --ignored --test-threads 1
+
 echo "drive, rendered by the app (typing, clicks, keys and focus in the hidden window):"
 drive drive "$out/render/hello"
 echo "drive, with screencapture:"
