@@ -1,7 +1,7 @@
 //! The AppKit calls that hide a window, read and choose its menus, and send
-//! events to the native views an app lays over GPUI's. This is the only
-//! unsafe code in Slate, so apps that forbid `unsafe_code` can still run
-//! hidden.
+//! events to the native views an app lays over GPUI's. This and the web view
+//! pictures in `snapshot.rs` are the only unsafe code in Slate, so apps that
+//! forbid `unsafe_code` can still run hidden.
 
 #![allow(unsafe_code)]
 
@@ -39,23 +39,23 @@ unsafe extern "C" {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct NSPoint {
-    x: f64,
-    y: f64,
+pub(crate) struct NSPoint {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct NSSize {
-    width: f64,
-    height: f64,
+pub(crate) struct NSSize {
+    pub width: f64,
+    pub height: f64,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct NSRect {
-    origin: NSPoint,
-    size: NSSize,
+pub(crate) struct NSRect {
+    pub origin: NSPoint,
+    pub size: NSSize,
 }
 
 /// One level below the desktop picture: nothing at this level is ever seen,
@@ -227,6 +227,12 @@ pub struct View(Id);
 impl View {
     pub fn of(window: &impl HasWindowHandle) -> Result<Self, String> {
         content_view(window).map(Self)
+    }
+
+    /// GPUI's NSView.
+    #[cfg(feature = "render")]
+    pub(crate) fn id(self) -> Id {
+        self.0
     }
 }
 

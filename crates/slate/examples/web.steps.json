@@ -1,0 +1,6 @@
+[
+  { "shot": "start" },
+  { "click": { "x": 560, "y": 120 } },
+  { "wait": 200 },
+  { "shot": "clicked" }
+]

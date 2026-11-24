@@ -96,12 +96,17 @@ Under Slate:
 
 | | With the `render` feature | Without it |
 | --- | --- | --- |
-| Who captures | The app, with GPUI's `Window::render_to_image` (Metal) | The `slate` command, with `screencapture -x -o -l <window>` |
+| Who captures | The app, with GPUI's `Window::render_to_image` (Metal) and WebKit's own picture of each web view | The `slate` command, with `screencapture -x -o -l <window>` |
 | Permission | None | Screen Recording for the terminal running `slate` |
+| Web views | Included (see below) | Included |
 | Window chrome | GPUI's pixels only: no traffic lights, square corners | Traffic lights and rounded corners included |
 | Colours | The exact sRGB values the app draws | Converted to the display's colour profile |
 
 `render` turns on GPUI's `test-support` feature in the app (Cargo features unify), which `render_to_image` needs. When the app can't render, the command falls back to `screencapture` and says why.
+
+### Web views in a rendered shot
+
+`render_to_image` draws only GPUI's own scene, so a native view the app lays over its GPUI view, such as a `wry` WKWebView made with `build_as_child`, would come out as the bare background under it. With `render`, Slate also asks each web view that shows (not hidden, not fully transparent, not empty) for its picture with `-[WKWebView takeSnapshotWithConfiguration:completionHandler:]`. WebKit draws it in the app's own process, so it needs no Screen Recording permission either, and it works with the window below the desktop, even for a launch shot, where the window doesn't claim it can be seen. Slate scales the picture to the window's device pixels, lays it over GPUI's frame where the view sits (clipped to the window, faded by the view's alpha) and blends it, so whatever GPUI draws under a transparent page (`with_transparent`) shows through. Both `slate shoot` and a drive's `shot` step wait for the pictures before writing the PNG. If WebKit fails or takes more than 5 s, the app's shot has no image and says why, so it never shows a web view half drawn or missing. The command then falls back to `screencapture`, as for any shot the app couldn't render. Only web views are drawn in: another kind of native view would still be missing from a rendered shot.
 
 ## What the command and the app say to each other
 
@@ -122,6 +127,9 @@ Under Slate:
 cargo test --workspace
 scripts/prove.sh            # writes target/slate-proof/{render,screencapture}.png and drive*/
 cargo test -p slate-cli --test shoot -- --ignored   # opens a hidden window
+cargo test -p slate-cli --test web -- --ignored     # the web view example; one test needs Screen Recording
 ```
 
-`scripts/prove.sh` shoots the example app in `crates/slate/examples/hello.rs` both ways, then drives it both ways with `crates/slate/examples/hello.steps.json`: it types into a text field, clicks a button twice, focuses a list and moves its selection with `j` and `k` (bound only in the list's key context), opens a palette with `cmd-k`, scrolls and resizes. While each run goes it asks System Events for the frontmost app every 100 ms, and fails if the example ever becomes frontmost or its window isn't below the desktop. It also fails if a shot in the drive looks just like the one before it, and runs the ignored `shoot` test on the rendering build, which fails unless the card built during render shows loaded. The example changes what it draws after it opens (a counter, a "Loaded" card, and a card whose view it builds while rendering once that card has loaded, which then loads 60 ms later), so the PNGs show the hidden window kept drawing, and its status line shows whether GPUI sees the window as active and how many focus events the list heard.
+`crates/slate/examples/web.rs` hosts a transparent `wry` web view over a yellow GPUI box, with a purple block over the page's top half that turns teal when clicked. The `web` tests shoot and drive it with `render` and check the block's colour and GPUI's yellow through the rest of the page, then compare the app's render of the web view's box with `screencapture -l` of the same window, converted to sRGB.
+
+`scripts/prove.sh` shoots the example app in `crates/slate/examples/hello.rs` both ways, then drives it both ways with `crates/slate/examples/hello.steps.json`: it types into a text field, clicks a button twice, focuses a list and moves its selection with `j` and `k` (bound only in the list's key context), opens a palette with `cmd-k`, scrolls and resizes. While each run goes it asks System Events for the frontmost app every 100 ms, and fails if the example ever becomes frontmost or its window isn't below the desktop. It also fails if a shot in the drive looks just like the one before it, and runs the ignored `shoot` test on the rendering build, which fails unless the card built during render shows loaded. The example changes what it draws after it opens (a counter, a "Loaded" card, and a card whose view it builds while rendering once that card has loaded, which then loads 60 ms later), so the PNGs show the hidden window kept drawing, and its status line shows whether GPUI sees the window as active and how many focus events the list heard. Last it runs the ignored `web` tests on a rendering build of the web view example.

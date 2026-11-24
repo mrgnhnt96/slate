@@ -17,7 +17,7 @@ serde_json = "1"
 
 [workspace.lints.rust]
 # The objc calls that hide the window are the only unsafe code, and they
-# live in crates/slate/src/mac.rs with an explicit allow.
+# live in crates/slate/src/mac.rs and snapshot.rs with an explicit allow.
 unsafe_code = "deny"
 # objc 0.2's msg_send! checks a `cargo-clippy` feature that no crate has.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
